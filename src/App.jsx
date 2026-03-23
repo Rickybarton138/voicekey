@@ -281,40 +281,197 @@ const estimateChordsFromChroma = (audioBuffer, detectedKey) => {
 
 // ── Chord Diagrams ───────────────────────────────────────────────────────────
 const CHORD_SHAPES = {
-  "C":   { dots:[{s:5,f:3},{s:4,f:2},{s:2,f:1}], mute:[6], open:[3,1] },
-  "G":   { dots:[{s:6,f:3},{s:5,f:2},{s:1,f:3}], mute:[], open:[4,3,2] },
-  "D":   { dots:[{s:3,f:2},{s:2,f:3},{s:1,f:2}], mute:[6,5], open:[] },
-  "A":   { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:2}], mute:[6], open:[5,1] },
-  "E":   { dots:[{s:5,f:2},{s:4,f:2},{s:3,f:1}], mute:[], open:[6,2,1] },
-  "Am":  { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:1}], mute:[6], open:[5,1] },
-  "Em":  { dots:[{s:5,f:2},{s:4,f:2}], mute:[], open:[6,3,2,1] },
-  "Dm":  { dots:[{s:3,f:2},{s:2,f:3},{s:1,f:1}], mute:[6,5], open:[] },
-  "F":   { dots:[{s:5,f:3},{s:4,f:3},{s:3,f:2}], barre:{fret:1,from:6,to:1}, mute:[], open:[] },
-  "B":   { dots:[{s:4,f:4},{s:3,f:4},{s:2,f:4}], barre:{fret:2,from:5,to:1}, mute:[6], open:[] },
+  // Major open
+  "C":    { dots:[{s:5,f:3},{s:4,f:2},{s:2,f:1}], mute:[6], open:[3,1] },
+  "D":    { dots:[{s:3,f:2},{s:2,f:3},{s:1,f:2}], mute:[6,5], open:[4] },
+  "E":    { dots:[{s:5,f:2},{s:4,f:2},{s:3,f:1}], mute:[], open:[6,2,1] },
+  "G":    { dots:[{s:6,f:3},{s:5,f:2},{s:1,f:3}], mute:[], open:[4,3,2] },
+  "A":    { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:2}], mute:[6], open:[5,1] },
+  // Minor open
+  "Am":   { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:1}], mute:[6], open:[5,1] },
+  "Dm":   { dots:[{s:3,f:2},{s:2,f:3},{s:1,f:1}], mute:[6,5], open:[4] },
+  "Em":   { dots:[{s:5,f:2},{s:4,f:2}], mute:[], open:[6,3,2,1] },
+  // 7th
+  "A7":   { dots:[{s:4,f:2},{s:2,f:2}], mute:[6], open:[5,3,1] },
+  "B7":   { dots:[{s:5,f:2},{s:4,f:1},{s:3,f:2},{s:1,f:2}], mute:[6], open:[2] },
+  "C7":   { dots:[{s:5,f:3},{s:4,f:2},{s:3,f:3},{s:2,f:1}], mute:[6], open:[1] },
+  "D7":   { dots:[{s:3,f:2},{s:2,f:1},{s:1,f:2}], mute:[6,5], open:[4] },
+  "E7":   { dots:[{s:5,f:2},{s:3,f:1}], mute:[], open:[6,4,2,1] },
+  "G7":   { dots:[{s:6,f:3},{s:5,f:2},{s:1,f:1}], mute:[], open:[4,3,2] },
+  // Minor 7th
+  "Am7":  { dots:[{s:4,f:2},{s:2,f:1}], mute:[6], open:[5,3,1] },
+  "Dm7":  { dots:[{s:3,f:2},{s:2,f:1},{s:1,f:1}], mute:[6,5], open:[4] },
+  "Em7":  { dots:[{s:5,f:2}], mute:[], open:[6,4,3,2,1] },
+  // Sus
+  "Asus2": { dots:[{s:4,f:2},{s:3,f:2}], mute:[6], open:[5,2,1] },
+  "Asus4": { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:3}], mute:[6], open:[5,1] },
+  "Dsus2": { dots:[{s:3,f:2},{s:1,f:2}], mute:[6,5], open:[4,2] },
+  "Dsus4": { dots:[{s:3,f:2},{s:2,f:3},{s:1,f:3}], mute:[6,5], open:[4] },
+  "Esus4": { dots:[{s:5,f:2},{s:4,f:2},{s:3,f:2}], mute:[], open:[6,2,1] },
+  // Add / Maj7
+  "Cadd9": { dots:[{s:5,f:3},{s:4,f:2},{s:2,f:3}], mute:[6], open:[3,1] },
+  "Cmaj7": { dots:[{s:5,f:3},{s:4,f:2}], mute:[6], open:[3,2,1] },
+  "Fmaj7": { dots:[{s:4,f:3},{s:3,f:2},{s:2,f:1}], mute:[6,5], open:[1] },
+  "Dadd9": { dots:[{s:3,f:2},{s:1,f:2}], mute:[6,5], open:[4,2] },
+  // Common barre (manually for accuracy)
+  "F":    { dots:[{s:5,f:3},{s:4,f:3},{s:3,f:2}], barre:{fret:1,from:6,to:1}, mute:[], open:[] },
+  "Fm":   { dots:[{s:5,f:3},{s:4,f:3}], barre:{fret:1,from:6,to:1}, mute:[], open:[] },
+  "B":    { dots:[{s:4,f:4},{s:3,f:4},{s:2,f:4}], barre:{fret:2,from:5,to:1}, mute:[6], open:[] },
+  "Bm":   { dots:[{s:4,f:4},{s:3,f:4},{s:2,f:3}], barre:{fret:2,from:5,to:1}, mute:[6], open:[] },
+  "Bb":   { dots:[{s:4,f:3},{s:3,f:3},{s:2,f:3}], barre:{fret:1,from:5,to:1}, mute:[6], open:[] },
+  "Bbm":  { dots:[{s:4,f:3},{s:3,f:3},{s:2,f:2}], barre:{fret:1,from:5,to:1}, mute:[6], open:[] },
+  // A7sus4 (common in Wonderwall)
+  "A7sus4": { dots:[{s:4,f:2},{s:2,f:3}], mute:[6], open:[5,3,1] },
+};
+
+// Barre chord templates for generating any chord not in the manual list
+const BARRE_TEMPLATES = {
+  major_E:  { dots:[{s:5,f:2},{s:4,f:2},{s:3,f:1}], from:6 },
+  minor_E:  { dots:[{s:5,f:2},{s:4,f:2}], from:6 },
+  "7_E":    { dots:[{s:5,f:2},{s:3,f:1}], from:6 },
+  major_A:  { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:2}], from:5 },
+  minor_A:  { dots:[{s:4,f:2},{s:3,f:2},{s:2,f:1}], from:5 },
+  "7_A":    { dots:[{s:4,f:2},{s:2,f:2}], from:5 },
+};
+
+// Root note -> fret on 6th string (E-shape)
+const FRET_6 = { "E":0,"F":1,"F#":2,"Gb":2,"G":3,"G#":4,"Ab":4,"A":5,"A#":6,"Bb":6,"B":7,"C":8,"C#":9,"Db":9,"D":10,"D#":11,"Eb":11 };
+// Root note -> fret on 5th string (A-shape)
+const FRET_5 = { "A":0,"A#":1,"Bb":1,"B":2,"C":3,"C#":4,"Db":4,"D":5,"D#":6,"Eb":6,"E":7,"F":8,"F#":9,"Gb":9,"G":10,"G#":11,"Ab":11 };
+
+const getChordShape = (chordName) => {
+  if (!chordName) return null;
+  // Direct lookup first
+  if (CHORD_SHAPES[chordName]) return CHORD_SHAPES[chordName];
+
+  // Parse chord name
+  const match = chordName.match(/^([A-G][#b]?)(m(?!aj)|min)?(maj7|maj|7|dim|aug|sus[24]|add[29])?$/);
+  if (!match) return null;
+
+  const [, root, minor, quality] = match;
+  const normRootName = root.replace("Db","C#").replace("Eb","D#").replace("Gb","F#").replace("Ab","G#").replace("Bb","A#");
+
+  // Determine chord type for template
+  let templateType = minor ? "minor" : "major";
+  if (quality === "7") templateType = "7";
+
+  // Try E-shape first (prefer lower frets)
+  const fret6 = FRET_6[normRootName];
+  const fret5 = FRET_5[normRootName];
+
+  let useFret, template, muteStrings;
+  if (fret6 !== undefined && fret6 > 0 && fret6 <= 12) {
+    const tpl = BARRE_TEMPLATES[templateType + "_E"];
+    if (tpl) {
+      useFret = fret6;
+      template = tpl;
+      muteStrings = [];
+    }
+  }
+  // If E-shape fret is too high or not available, try A-shape
+  if ((!useFret || useFret > 7) && fret5 !== undefined && fret5 > 0 && fret5 <= 12) {
+    const tpl = BARRE_TEMPLATES[templateType + "_A"];
+    if (tpl) {
+      useFret = fret5;
+      template = tpl;
+      muteStrings = [6];
+    }
+  }
+
+  if (!useFret || !template) return null;
+
+  return {
+    dots: template.dots.map(d => ({ s: d.s, f: d.f + useFret })),
+    barre: { fret: useFret, from: template.from, to: 1 },
+    mute: muteStrings,
+    open: [],
+    baseFret: useFret > 4 ? useFret : undefined,
+  };
+};
+
+// ── Capo Advisor ─────────────────────────────────────────────────────────────
+const EASY_KEYS = {
+  "C":  ["C","Am","F","G","Em","Dm","G7"],
+  "G":  ["G","Em","C","D","Am","D7","Cadd9"],
+  "D":  ["D","Bm","G","A","Em","A7"],
+  "A":  ["A","E","D","F#m","Bm","E7"],
+  "E":  ["E","A","B","C#m","F#m","B7"],
+  "Am": ["Am","Dm","Em","C","G","F","E7"],
+  "Em": ["Em","Am","C","D","G","B7"],
+  "Dm": ["Dm","Am","C","F","G","Bb","A7"],
+};
+
+const suggestCapo = (songKey) => {
+  const root = songKey.replace(/m(?!aj)|maj|7|sus\d|add\d|dim|aug/g,"").trim();
+  const isMinor = songKey.includes("m") && !songKey.includes("maj");
+  const suggestions = [];
+
+  for (const [easyKey, chords] of Object.entries(EASY_KEYS)) {
+    const easyRoot = easyKey.replace("m","");
+    const easyIsMinor = easyKey.includes("m");
+    if (isMinor !== easyIsMinor) continue;
+
+    const rootIdx = NOTES.indexOf(normRoot(root));
+    const easyIdx = NOTES.indexOf(normRoot(easyRoot));
+    if (rootIdx === -1 || easyIdx === -1) continue;
+    const capo = ((rootIdx - easyIdx) % 12 + 12) % 12;
+    if (capo === 0) continue;
+    if (capo > 7) continue;
+
+    suggestions.push({
+      capo,
+      playAs: easyKey,
+      chords,
+      difficulty: capo <= 3 ? "easy" : capo <= 5 ? "moderate" : "stretch",
+    });
+  }
+
+  suggestions.sort((a,b) => a.capo - b.capo);
+  return suggestions.slice(0, 3);
 };
 
 const ChordDiagram = ({ chord, size = 80 }) => {
-  const rootName = chord?.replace(/m(?!aj)|7|sus\d|add\d|dim|aug|maj/g,"");
-  const shape = CHORD_SHAPES[chord] || CHORD_SHAPES[rootName] || null;
+  const shape = getChordShape(chord);
   const strings = 6, frets = 4;
   const pad = 14, sw = (size - pad*2) / (strings-1), fh = (size - pad*2) / frets;
+  const baseFret = shape?.baseFret || 1;
+
   return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
       <div style={{fontSize:13,fontWeight:700,color:"var(--accent)",fontFamily:"'Crimson Pro',Georgia,serif",letterSpacing:-0.3}}>{chord}</div>
       <svg width={size} height={size} style={{overflow:"visible"}}>
-        <rect x={pad} y={pad} width={(strings-1)*sw} height={3} rx={1} fill="rgba(255,255,255,0.45)"/>
+        {/* Nut (only thick at fret 0) */}
+        <rect x={pad} y={pad} width={(strings-1)*sw} height={baseFret===1?3:1} rx={1} fill={baseFret===1?"rgba(255,255,255,0.45)":"rgba(255,255,255,0.15)"}/>
+        {/* Fret number for high positions */}
+        {baseFret > 1 && <text x={pad-10} y={pad+fh/2+4} textAnchor="end" fontSize={9} fill="var(--muted)" fontFamily="'DM Sans',sans-serif">{baseFret}</text>}
+        {/* Strings */}
         {Array.from({length:strings}).map((_,i)=>(
           <line key={i} x1={pad+i*sw} y1={pad} x2={pad+i*sw} y2={pad+frets*fh} stroke="rgba(255,255,255,0.15)" strokeWidth={1}/>
         ))}
+        {/* Frets */}
         {Array.from({length:frets}).map((_,i)=>(
           <line key={i} x1={pad} y1={pad+(i+1)*fh} x2={pad+(strings-1)*sw} y2={pad+(i+1)*fh} stroke="rgba(255,255,255,0.08)" strokeWidth={1}/>
         ))}
+        {/* Barre */}
         {shape?.barre && (
-          <rect x={pad+(6-shape.barre.from)*sw-4} y={pad+shape.barre.fret*fh-fh/2-6} width={(shape.barre.from-shape.barre.to)*sw+8} height={12} rx={6} fill="rgba(99,202,148,0.6)"/>
+          <rect x={pad+(6-shape.barre.from)*sw-4} y={pad+(shape.barre.fret - (baseFret-1))*fh-fh/2-6} width={(shape.barre.from-shape.barre.to)*sw+8} height={12} rx={6} fill="rgba(99,202,148,0.6)"/>
         )}
-        {shape?.dots?.map((d,i)=>(
-          <circle key={i} cx={pad+(6-d.s)*sw} cy={pad+d.f*fh-fh/2} r={7} fill="#63ca94"/>
+        {/* Dots */}
+        {shape?.dots?.map((d,i)=>{
+          const fretPos = d.f - (baseFret - 1);
+          return fretPos > 0 && fretPos <= frets ? (
+            <circle key={i} cx={pad+(6-d.s)*sw} cy={pad+fretPos*fh-fh/2} r={7} fill="#63ca94"/>
+          ) : null;
+        })}
+        {/* Mute markers */}
+        {shape?.mute?.map(s => (
+          <text key={s} x={pad+(6-s)*sw} y={pad-5} textAnchor="middle" fontSize={10} fill="rgba(255,255,255,0.3)" fontFamily="sans-serif">×</text>
         ))}
+        {/* Open string markers */}
+        {shape?.open?.map(s => (
+          <circle key={s} cx={pad+(6-s)*sw} cy={pad-6} r={3.5} fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={1.2}/>
+        ))}
+        {/* No shape fallback */}
         {!shape && <text x={size/2} y={size/2+4} textAnchor="middle" fontSize={11} fill="rgba(255,255,255,0.2)">no shape</text>}
       </svg>
     </div>
@@ -505,7 +662,7 @@ const UpgradeModal = ({ onClose, feature }) => (
     <div className="fade-in card" style={{maxWidth:420,width:"100%",textAlign:"center",padding:36}}>
       <div style={{fontSize:44,marginBottom:16}}>⭐</div>
       <div style={{fontFamily:"'Crimson Pro',serif",fontSize:26,fontWeight:700,marginBottom:8}}>Unlock VoiceKey Pro</div>
-      <p style={{color:"var(--muted)",fontSize:14,lineHeight:1.7,marginBottom:24}}>You've used your 3 free analyses this month. Upgrade to get unlimited songs, AI Coach, Practice Mode, Chord Diagrams and Setlist Manager.</p>
+      <p style={{color:"var(--muted)",fontSize:14,lineHeight:1.7,marginBottom:24}}>You've used your 3 free analyses this month. Upgrade to get unlimited songs, AI Coach, Practice Mode, Capo Advisor and Setlist Manager.</p>
       <div style={{display:"flex",gap:10,marginBottom:20}}>
         <div style={{flex:1,background:"rgba(99,202,148,0.07)",border:"1px solid rgba(99,202,148,0.2)",borderRadius:14,padding:16}}>
           <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Monthly</div>
@@ -521,7 +678,7 @@ const UpgradeModal = ({ onClose, feature }) => (
         </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
-        {["Unlimited song analyses","AI Song Coach (Claude-powered)","Practice Mode + Metronome","Chord Diagrams for every key","Setlist Manager","Priority support"].map(f => (
+        {["Unlimited song analyses","AI Song Coach (Claude-powered)","Practice Mode + Metronome","Smart Capo Advisor","Setlist Manager","Priority support"].map(f => (
           <div key={f} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"rgba(255,255,255,0.7)"}}>
             <span style={{color:"var(--accent)",fontSize:14}}>✓</span>{f}
           </div>
@@ -586,7 +743,6 @@ export default function VoiceKeyV3() {
   const [showCoach, setShowCoach] = useState(false);
   const [showSetlist, setShowSetlist] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
-  const [showDiagrams, setShowDiagrams] = useState(false);
   const [setlist, setSetlist] = useState([]);
   const [savedMsg, setSavedMsg] = useState(false);
   const [isPro] = useState(true); // toggle to false to re-enable freemium gate
@@ -1413,6 +1569,40 @@ export default function VoiceKeyV3() {
                 </div>
               )}
 
+              {/* Capo Advisor */}
+              {(() => {
+                const yourKey = NOTES[((NOTES.indexOf(normRoot(songData.key.replace(/m|maj|7/g,""))) + semitones) % 12 + 12) % 12] + (songData.key.includes("m") && !songData.key.includes("maj") ? "m" : "");
+                const capoSuggestions = suggestCapo(yourKey);
+                return capoSuggestions.length > 0 ? (
+                  <div style={{background:"rgba(232,196,106,0.05)",border:"1px solid rgba(232,196,106,0.18)",borderRadius:14,padding:"16px 18px",marginBottom:14}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                      <span style={{fontSize:18}}>🎸</span>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:14,color:"var(--gold)"}}>Capo Advisor</div>
+                        <div style={{fontSize:11,color:"var(--muted)"}}>Easier ways to play in {yourKey}</div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {capoSuggestions.map((sug,i) => (
+                        <div key={i} style={{background:"rgba(0,0,0,0.2)",borderRadius:12,padding:"12px 14px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                            <div style={{background:sug.difficulty==="easy"?"rgba(99,202,148,0.15)":sug.difficulty==="moderate"?"rgba(232,196,106,0.15)":"rgba(251,146,60,0.15)",border:`1px solid ${sug.difficulty==="easy"?"rgba(99,202,148,0.3)":sug.difficulty==="moderate"?"rgba(232,196,106,0.3)":"rgba(251,146,60,0.3)"}`,borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,color:sug.difficulty==="easy"?"var(--accent)":sug.difficulty==="moderate"?"var(--gold)":"#fb923c"}}>
+                              Capo {sug.capo}
+                            </div>
+                            <span style={{fontSize:13,color:"var(--muted)"}}>Play as</span>
+                            <span style={{fontSize:14,fontWeight:700,color:"var(--text)",fontFamily:"'Crimson Pro',serif"}}>{sug.playAs}</span>
+                            <span style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginLeft:"auto"}}>{sug.difficulty}</span>
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:12,justifyContent:"center"}}>
+                            {sug.chords.slice(0,5).map(c => <ChordDiagram key={c} chord={c} size={64}/>)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
               {/* Chords */}
               <div className="label">Transposed chords — your key of {vocalKey}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
@@ -1428,15 +1618,10 @@ export default function VoiceKeyV3() {
                 })}
               </div>
 
-              {/* Chord diagrams toggle — Pro */}
-              <button className="btn btn-ghost" style={{width:"100%",marginBottom:14,fontSize:13}} onClick={() => isPro ? setShowDiagrams(d=>!d) : goPro()}>
-                🎸 {showDiagrams?"Hide":"Show"} Chord Diagrams {!isPro&&<span className="badge badge-pro" style={{marginLeft:6}}>PRO</span>}
-              </button>
-              {showDiagrams && isPro && (
-                <div style={{display:"flex",flexWrap:"wrap",gap:20,justifyContent:"center",paddingBottom:4}}>
-                  {[...new Set(transposedChords)].map(c => <ChordDiagram key={c} chord={c} size={76}/>)}
-                </div>
-              )}
+              {/* Chord diagrams — always visible */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:20,justifyContent:"center",paddingBottom:4,marginBottom:14}}>
+                {[...new Set(transposedChords)].map(c => <ChordDiagram key={c} chord={c} size={76}/>)}
+              </div>
 
               {/* Fine tune */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,padding:"12px 0",borderTop:"1px solid var(--border)",marginTop:4}}>
