@@ -589,7 +589,7 @@ export default function VoiceKeyV3() {
   const [showDiagrams, setShowDiagrams] = useState(false);
   const [setlist, setSetlist] = useState([]);
   const [savedMsg, setSavedMsg] = useState(false);
-  const [isPro] = useState(false); // toggle to true to demo Pro
+  const [isPro] = useState(true); // toggle to false to re-enable freemium gate
 
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
