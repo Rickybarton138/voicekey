@@ -74,6 +74,211 @@ const getSong = url => {
   return SONGS.default;
 };
 
+// ── Audio Analysis (Web Audio API) ──────────────────────────────────────────
+const NOTE_NAMES_SHARP = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+// Krumhansl-Schmuckler key profiles
+const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+const rotateArray = (arr, n) => [...arr.slice(n), ...arr.slice(0, n)];
+
+const pearsonCorrelation = (x, y) => {
+  const n = x.length;
+  const mx = x.reduce((a, b) => a + b) / n;
+  const my = y.reduce((a, b) => a + b) / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const xd = x[i] - mx, yd = y[i] - my;
+    num += xd * yd; dx += xd * xd; dy += yd * yd;
+  }
+  return dx && dy ? num / Math.sqrt(dx * dy) : 0;
+};
+
+const extractChromaFromBuffer = async (audioBuffer) => {
+  const sampleRate = audioBuffer.sampleRate;
+  const channelData = audioBuffer.getChannelData(0);
+  const fftSize = 4096;
+  const hopSize = 2048;
+  const chroma = new Float32Array(12);
+  let frameCount = 0;
+
+  // Hann window
+  const window = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) window[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+
+  // Process frames
+  for (let start = 0; start + fftSize <= channelData.length; start += hopSize) {
+    const frame = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) frame[i] = channelData[start + i] * window[i];
+
+    // Simple DFT for the frequency bins we care about (27.5 Hz to 4186 Hz — piano range)
+    // We only need magnitude at specific pitch frequencies, not the full spectrum
+    // Use the real FFT approach: compute power spectrum via autocorrelation shortcut
+    // Actually, do a real FFT using the built-in OfflineAudioContext approach is complex,
+    // so we compute chroma by checking energy at each pitch class frequency directly
+
+    // For efficiency, use a simpler approach: compute energy in each pitch class
+    // by summing squared magnitudes of the DFT at frequencies corresponding to each note
+    const binWidth = sampleRate / fftSize;
+    // Compute a partial DFT — only at bins corresponding to musical pitches
+    for (let pc = 0; pc < 12; pc++) {
+      let energy = 0;
+      // Check octaves 2 through 7 for this pitch class
+      for (let oct = 2; oct <= 7; oct++) {
+        const midi = pc + (oct + 1) * 12; // MIDI note number
+        const freq = 440 * Math.pow(2, (midi - 69) / 12);
+        const bin = Math.round(freq / binWidth);
+        if (bin >= fftSize / 2) continue;
+        // Compute DFT at this specific bin using Goertzel-like approach
+        const angle = 2 * Math.PI * bin / fftSize;
+        let real = 0, imag = 0;
+        for (let i = 0; i < fftSize; i++) {
+          real += frame[i] * Math.cos(angle * i);
+          imag -= frame[i] * Math.sin(angle * i);
+        }
+        energy += real * real + imag * imag;
+      }
+      chroma[pc] += energy;
+    }
+    frameCount++;
+    // Skip frames for performance — process every 4th frame for long files
+    if (channelData.length > sampleRate * 60) start += hopSize * 3;
+  }
+
+  // Normalise
+  if (frameCount > 0) for (let i = 0; i < 12; i++) chroma[i] /= frameCount;
+  const maxVal = Math.max(...chroma);
+  if (maxVal > 0) for (let i = 0; i < 12; i++) chroma[i] /= maxVal;
+
+  return Array.from(chroma);
+};
+
+const detectKeyFromChroma = (chroma) => {
+  let bestKey = "C", bestMode = "major", bestCorr = -Infinity;
+
+  for (let i = 0; i < 12; i++) {
+    const majProfile = rotateArray(MAJOR_PROFILE, i);
+    const minProfile = rotateArray(MINOR_PROFILE, i);
+    const majCorr = pearsonCorrelation(chroma, majProfile);
+    const minCorr = pearsonCorrelation(chroma, minProfile);
+
+    if (majCorr > bestCorr) { bestCorr = majCorr; bestKey = NOTE_NAMES_SHARP[i]; bestMode = "major"; }
+    if (minCorr > bestCorr) { bestCorr = minCorr; bestKey = NOTE_NAMES_SHARP[i]; bestMode = "minor"; }
+  }
+
+  return { key: bestKey + (bestMode === "minor" ? "m" : ""), root: bestKey, mode: bestMode, confidence: bestCorr };
+};
+
+const estimateBPM = (audioBuffer) => {
+  const sampleRate = audioBuffer.sampleRate;
+  const channelData = audioBuffer.getChannelData(0);
+  // Compute energy envelope with hop
+  const hopSize = 512;
+  const envLen = Math.floor(channelData.length / hopSize);
+  const envelope = new Float32Array(envLen);
+  for (let i = 0; i < envLen; i++) {
+    let sum = 0;
+    const start = i * hopSize;
+    const end = Math.min(start + hopSize, channelData.length);
+    for (let j = start; j < end; j++) sum += channelData[j] * channelData[j];
+    envelope[i] = Math.sqrt(sum / (end - start));
+  }
+
+  // Onset detection: first-order difference
+  const onset = new Float32Array(envLen);
+  for (let i = 1; i < envLen; i++) onset[i] = Math.max(0, envelope[i] - envelope[i - 1]);
+
+  // Autocorrelation of onset signal to find periodicity
+  const envSampleRate = sampleRate / hopSize;
+  const minLag = Math.round(envSampleRate * 60 / 200); // 200 BPM max
+  const maxLag = Math.round(envSampleRate * 60 / 50);  // 50 BPM min
+  const maxSearch = Math.min(maxLag + 1, envLen);
+
+  let bestLag = minLag, bestCorr = -Infinity;
+  for (let lag = minLag; lag < maxSearch; lag++) {
+    let corr = 0, count = 0;
+    for (let i = 0; i < envLen - lag; i++) { corr += onset[i] * onset[i + lag]; count++; }
+    if (count > 0) corr /= count;
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+
+  let bpmVal = Math.round(envSampleRate * 60 / bestLag);
+  // Normalise to typical range: if double or half, adjust
+  while (bpmVal > 160) bpmVal = Math.round(bpmVal / 2);
+  while (bpmVal < 60) bpmVal = Math.round(bpmVal * 2);
+  return bpmVal;
+};
+
+const estimateChordsFromChroma = (audioBuffer, detectedKey) => {
+  const sampleRate = audioBuffer.sampleRate;
+  const channelData = audioBuffer.getChannelData(0);
+  const segmentDuration = 2; // seconds per segment
+  const segmentSamples = sampleRate * segmentDuration;
+  const fftSize = 4096;
+  const window = new Float32Array(fftSize);
+  for (let i = 0; i < fftSize; i++) window[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+  const binWidth = sampleRate / fftSize;
+
+  // Common chord templates (root, third, fifth as pitch class intervals)
+  const chordTemplates = [
+    { suffix: "",  intervals: [0, 4, 7] },       // major
+    { suffix: "m", intervals: [0, 3, 7] },       // minor
+    { suffix: "7", intervals: [0, 4, 7, 10] },   // dom7
+  ];
+
+  const chords = [];
+  const seen = new Set();
+  const numSegments = Math.min(Math.floor(channelData.length / segmentSamples), 16);
+
+  for (let seg = 0; seg < numSegments; seg++) {
+    const segStart = seg * segmentSamples;
+    const segChroma = new Float32Array(12);
+    let frames = 0;
+
+    for (let start = segStart; start + fftSize <= segStart + segmentSamples && start + fftSize <= channelData.length; start += fftSize) {
+      const frame = new Float32Array(fftSize);
+      for (let i = 0; i < fftSize; i++) frame[i] = channelData[start + i] * window[i];
+      for (let pc = 0; pc < 12; pc++) {
+        let energy = 0;
+        for (let oct = 2; oct <= 6; oct++) {
+          const midi = pc + (oct + 1) * 12;
+          const freq = 440 * Math.pow(2, (midi - 69) / 12);
+          const bin = Math.round(freq / binWidth);
+          if (bin >= fftSize / 2) continue;
+          const angle = 2 * Math.PI * bin / fftSize;
+          let real = 0, imag = 0;
+          for (let i = 0; i < fftSize; i++) { real += frame[i] * Math.cos(angle * i); imag -= frame[i] * Math.sin(angle * i); }
+          energy += real * real + imag * imag;
+        }
+        segChroma[pc] += energy;
+      }
+      frames++;
+    }
+    if (frames > 0) for (let i = 0; i < 12; i++) segChroma[i] /= frames;
+    const maxC = Math.max(...segChroma);
+    if (maxC > 0) for (let i = 0; i < 12; i++) segChroma[i] /= maxC;
+
+    // Match against chord templates
+    let bestChord = "C", bestScore = -Infinity;
+    for (let root = 0; root < 12; root++) {
+      for (const tmpl of chordTemplates) {
+        let score = 0;
+        for (const interval of tmpl.intervals) score += segChroma[(root + interval) % 12];
+        // Penalise non-chord tones slightly
+        const chordTones = new Set(tmpl.intervals.map(iv => (root + iv) % 12));
+        for (let pc = 0; pc < 12; pc++) if (!chordTones.has(pc)) score -= segChroma[pc] * 0.2;
+        if (score > bestScore) { bestScore = score; bestChord = NOTE_NAMES_SHARP[root] + tmpl.suffix; }
+      }
+    }
+
+    if (!seen.has(bestChord)) { seen.add(bestChord); chords.push(bestChord); }
+  }
+
+  // Return unique chords (up to 6), or fallback
+  return chords.length > 0 ? chords.slice(0, 6) : ["C", "G", "Am", "F"];
+};
+
 // ── Chord Diagrams ───────────────────────────────────────────────────────────
 const CHORD_SHAPES = {
   "C":   { dots:[{s:5,f:3},{s:4,f:2},{s:2,f:1}], mute:[6], open:[3,1] },
@@ -168,6 +373,19 @@ input[type=text]:focus, input[type=url]:focus { border-color:rgba(99,202,148,0.5
 @keyframes dotPulse { 0%,100%{opacity:0.3;transform:scale(0.85)} 50%{opacity:1;transform:scale(1)} }
 .fade-in { animation:fadeIn 0.35s ease both; }
 .pulse-glow { animation:pulseGlow 2s ease infinite; }
+.upload-zone { border:2px dashed rgba(99,202,148,0.25); border-radius:16px; padding:28px 20px; text-align:center; cursor:pointer; transition:all 0.25s; background:rgba(99,202,148,0.03); }
+.upload-zone:hover, .upload-zone.drag-over { border-color:rgba(99,202,148,0.5); background:rgba(99,202,148,0.07); }
+.upload-zone.has-file { border-color:rgba(99,202,148,0.4); background:rgba(99,202,148,0.06); border-style:solid; }
+.audio-player { display:flex; align-items:center; gap:10px; background:rgba(0,0,0,0.25); border:1px solid rgba(99,202,148,0.15); border-radius:14px; padding:12px 16px; }
+.audio-player .play-btn { width:38px; height:38px; border-radius:50%; border:none; background:linear-gradient(135deg,#63ca94,#2d9a62); color:#071a0e; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; transition:all 0.18s; }
+.audio-player .play-btn:hover { transform:scale(1.06); box-shadow:0 2px 14px rgba(99,202,148,0.35); }
+.audio-player .progress-track { flex:1; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; cursor:pointer; position:relative; overflow:hidden; }
+.audio-player .progress-fill { height:100%; background:var(--accent); border-radius:3px; transition:width 0.1s linear; }
+.audio-player .time { font-size:11px; color:var(--muted); font-family:monospace; min-width:40px; text-align:right; flex-shrink:0; }
+.analyse-phase { display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; margin-bottom:8px; font-size:13px; font-weight:500; }
+.analyse-phase.active { background:rgba(99,202,148,0.08); color:var(--accent); }
+.analyse-phase.done { background:rgba(99,202,148,0.05); color:rgba(99,202,148,0.5); }
+.analyse-phase.pending { background:rgba(255,255,255,0.02); color:rgba(255,255,255,0.2); }
 `;
 
 // ── Waveform ─────────────────────────────────────────────────────────────────
@@ -336,6 +554,27 @@ export default function VoiceKeyV3() {
   const [semitones, setSemitones] = useState(0);
   const [analysisCount, setAnalysisCount] = useState(0);
 
+  // Audio upload state
+  const [audioFile, setAudioFile] = useState(null);
+  const [audioBuffer, setAudioBuffer] = useState(null);
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [analysing, setAnalysing] = useState(false);
+  const [analysePhase, setAnalysePhase] = useState("");
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Play & Sing state
+  const [playSingActive, setPlaySingActive] = useState(false);
+  const [playSingDone, setPlaySingDone] = useState(false);
+  const [playSingLevel, setPlaySingLevel] = useState(0);
+  const [playSingTick, setPlaySingTick] = useState(0);
+  const [playSingNote, setPlaySingNote] = useState(null); // current MIDI note
+  const [playSingLo, setPlaySingLo] = useState(null);
+  const [playSingHi, setPlaySingHi] = useState(null);
+  const [playSingNotes, setPlaySingNotes] = useState([]); // all captured notes for histogram
+
   // Practice state
   const [practiceIdx, setPracticeIdx] = useState(0);
   const [metronome, setMetronome] = useState(false);
@@ -360,11 +599,23 @@ export default function VoiceKeyV3() {
   const notesRef = useRef([]);
   const metroRef = useRef(null);
   const autoRef = useRef(null);
+  const audioElRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const playSingCtxRef = useRef(null);
+  const playSingStreamRef = useRef(null);
+  const playSingAnalyserRef = useRef(null);
+  const playSingAnimRef = useRef(null);
+  const playSingNotesRef = useRef([]);
 
   // Tick for waveform animation
   useEffect(() => {
     if (recording) { const t = setInterval(() => setTick(x => x+1), 80); return () => clearInterval(t); }
   }, [recording]);
+
+  // Tick for Play & Sing waveform
+  useEffect(() => {
+    if (playSingActive) { const t = setInterval(() => setPlaySingTick(x => x+1), 80); return () => clearInterval(t); }
+  }, [playSingActive]);
 
   // Metronome
   useEffect(() => {
@@ -469,6 +720,249 @@ export default function VoiceKeyV3() {
     setTab(2);
   };
 
+  // Audio file upload and analysis
+  const handleAudioFile = async (file) => {
+    if (!file) return;
+    const validTypes = ["audio/mpeg", "audio/wav", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/webm", "audio/aac"];
+    const ext = file.name.split(".").pop().toLowerCase();
+    const validExts = ["mp3", "wav", "m4a", "ogg", "webm", "aac"];
+    if (!validTypes.includes(file.type) && !validExts.includes(ext)) {
+      alert("Please upload an MP3, WAV, M4A, or OGG audio file.");
+      return;
+    }
+    if (!isPro && analysisCount >= LIMIT_FREE) { setShowUpgrade(true); return; }
+
+    // Clean up previous audio URL
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+
+    const objUrl = URL.createObjectURL(file);
+    setAudioFile(file);
+    setAudioUrl(objUrl);
+    setIsPlaying(false);
+    setPlaybackTime(0);
+    setAnalysing(true);
+    setAnalysePhase("decoding");
+
+    try {
+      // Decode audio
+      const arrayBuffer = await file.arrayBuffer();
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await actx.decodeAudioData(arrayBuffer);
+      setAudioBuffer(decoded);
+      setAudioDuration(decoded.duration);
+      actx.close();
+
+      // Detect key
+      setAnalysePhase("key");
+      // Yield to UI
+      await new Promise(r => setTimeout(r, 50));
+      const chroma = await extractChromaFromBuffer(decoded);
+      const keyResult = detectKeyFromChroma(chroma);
+
+      // Estimate BPM
+      setAnalysePhase("bpm");
+      await new Promise(r => setTimeout(r, 50));
+      const detectedBpm = estimateBPM(decoded);
+
+      // Estimate chords
+      setAnalysePhase("chords");
+      await new Promise(r => setTimeout(r, 50));
+      const detectedChords = estimateChordsFromChroma(decoded, keyResult);
+
+      setAnalysePhase("done");
+
+      // Build song data
+      const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const song = {
+        title,
+        artist: "Uploaded",
+        key: keyResult.key,
+        bpm: detectedBpm,
+        chords: detectedChords,
+        genre: "Detected",
+        difficulty: "—",
+        tags: ["uploaded"],
+      };
+
+      setSongData(song);
+      setBpm(detectedBpm);
+      const rootKey = keyResult.root;
+      setSemitones(semitonesBetween(rootKey, vocalKey || "G"));
+      setAnalysisCount(c => c + 1);
+      setPracticeIdx(0);
+      setAnalysing(false);
+    } catch (err) {
+      console.error("Audio analysis failed:", err);
+      setAnalysing(false);
+      setAnalysePhase("");
+      alert("Could not analyse this audio file. Please try a different file.");
+    }
+  };
+
+  const handleFileDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleAudioFile(file);
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleAudioFile(file);
+  };
+
+  // ── Play & Sing Mode ──────────────────────────────────────────────────────
+  const startPlaySing = async () => {
+    playSingNotesRef.current = [];
+    setPlaySingNotes([]);
+    setPlaySingNote(null);
+    setPlaySingLo(null);
+    setPlaySingHi(null);
+    setPlaySingDone(false);
+
+    try {
+      // Open mic
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      playSingStreamRef.current = stream;
+      const ctx = new AudioContext();
+      playSingCtxRef.current = ctx;
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      playSingAnalyserRef.current = analyser;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+
+      // Start audio playback
+      const el = audioElRef.current;
+      if (el) { el.currentTime = 0; el.play(); setIsPlaying(true); }
+
+      setPlaySingActive(true);
+
+      // Pitch tracking loop
+      const buf = new Float32Array(analyser.fftSize);
+      const collect = () => {
+        analyser.getFloatTimeDomainData(buf);
+        let s = 0;
+        for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+        setPlaySingLevel(Math.min(Math.sqrt(s / buf.length) * 22, 1));
+
+        const f = autoCorrelate(buf, ctx.sampleRate);
+        if (f > 60 && f < 1200) {
+          const m = noteFromFreq(f);
+          if (m > 28 && m < 96) {
+            playSingNotesRef.current.push(m);
+            setPlaySingNote(m);
+            // Update running lo/hi
+            const notes = playSingNotesRef.current;
+            if (notes.length > 5) {
+              const sorted = [...notes].sort((a, b) => a - b);
+              const lo = sorted[Math.floor(sorted.length * 0.05)];
+              const hi = sorted[Math.floor(sorted.length * 0.95)];
+              setPlaySingLo(lo);
+              setPlaySingHi(hi);
+            }
+          }
+        } else {
+          setPlaySingNote(null);
+        }
+        playSingAnimRef.current = requestAnimationFrame(collect);
+      };
+      collect();
+
+      // Listen for audio end
+      const onEnded = () => { stopPlaySing(); el?.removeEventListener("ended", onEnded); };
+      el?.addEventListener("ended", onEnded);
+    } catch (err) {
+      console.error("Play & Sing failed:", err);
+      alert("Could not access microphone. Please allow mic access and use headphones.");
+    }
+  };
+
+  const stopPlaySing = () => {
+    // Stop mic
+    cancelAnimationFrame(playSingAnimRef.current);
+    playSingStreamRef.current?.getTracks().forEach(t => t.stop());
+    playSingCtxRef.current?.close().catch(() => {});
+    setPlaySingActive(false);
+
+    // Pause audio
+    const el = audioElRef.current;
+    if (el) { el.pause(); setIsPlaying(false); }
+
+    // Finalise voice from singing session
+    const notes = playSingNotesRef.current;
+    if (notes.length > 10) {
+      const sorted = [...notes].sort((a, b) => a - b);
+      const lo = sorted[Math.floor(sorted.length * 0.05)];
+      const hi = sorted[Math.floor(sorted.length * 0.95)];
+      setPlaySingLo(lo);
+      setPlaySingHi(hi);
+      setPlaySingNotes([...notes]);
+
+      // Update the main voice profile from this session
+      setLoNote(lo);
+      setHiNote(hi);
+      const vt = detectVoiceType(lo, hi);
+      setVoiceType(vt);
+      const newKey = midiToName(Math.round((lo + hi) / 2));
+      setVocalKey(newKey);
+      setRecPhase("done");
+
+      // Recalculate transposition with new vocal key
+      if (songData) {
+        const rootKey = songData.key.replace(/m|maj|7|sus\d|dim|aug/g, "");
+        setSemitones(semitonesBetween(rootKey, newKey));
+      }
+
+      setPlaySingDone(true);
+    } else {
+      setPlaySingDone(true);
+    }
+  };
+
+  const togglePlayback = () => {
+    const el = audioElRef.current;
+    if (!el) return;
+    if (isPlaying) { el.pause(); } else { el.play(); }
+    setIsPlaying(!isPlaying);
+  };
+
+  const seekAudio = (e) => {
+    const el = audioElRef.current;
+    if (!el || !audioDuration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    el.currentTime = pct * audioDuration;
+    setPlaybackTime(el.currentTime);
+  };
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  // Update playback time
+  useEffect(() => {
+    const el = audioElRef.current;
+    if (!el) return;
+    const onTime = () => setPlaybackTime(el.currentTime);
+    const onEnd = () => { setIsPlaying(false); setPlaybackTime(0); };
+    const onLoad = () => setAudioDuration(el.duration);
+    el.addEventListener("timeupdate", onTime);
+    el.addEventListener("ended", onEnd);
+    el.addEventListener("loadedmetadata", onLoad);
+    return () => {
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("ended", onEnd);
+      el.removeEventListener("loadedmetadata", onLoad);
+    };
+  }, [audioUrl]);
+
+  // Clean up object URL on unmount
+  useEffect(() => {
+    return () => { if (audioUrl) URL.revokeObjectURL(audioUrl); };
+  }, [audioUrl]);
+
   const saveToSetlist = () => {
     if (!songData) return;
     const yourKey = NOTES[((NOTES.indexOf(normRoot(songData.key.replace(/m|maj|7/g,""))) + semitones) % 12 + 12) % 12] || vocalKey;
@@ -487,6 +981,8 @@ export default function VoiceKeyV3() {
   return (
     <>
       <style>{CSS}</style>
+      {audioUrl && <audio ref={audioElRef} src={audioUrl} preload="metadata" />}
+      <input ref={fileInputRef} type="file" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,audio/*" style={{display:"none"}} onChange={handleFileSelect} />
       <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",flexDirection:"column",alignItems:"center",padding:"0 16px 80px",position:"relative"}}>
 
         {/* Ambient bg */}
@@ -600,8 +1096,8 @@ export default function VoiceKeyV3() {
           {/* ── TAB 1: SONG ───────────────────────────────────────────────── */}
           {tab === 1 && <>
             <div className="card fade-in">
-              <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:6}}>Find a Song</div>
-              <p style={{color:"var(--muted)",fontSize:13,marginBottom:18,lineHeight:1.65}}>Paste a YouTube URL and we'll extract the chords and calculate your exact transposition.</p>
+              <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:6}}>Analyse a Song</div>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:18,lineHeight:1.65}}>Upload an audio file for real key and BPM detection, or paste a YouTube URL to match from our library.</p>
 
               <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(99,202,148,0.07)",border:"1px solid rgba(99,202,148,0.15)",borderRadius:12,padding:"10px 14px",marginBottom:18}}>
                 <span style={{fontSize:18}}>🎤</span>
@@ -611,8 +1107,217 @@ export default function VoiceKeyV3() {
                 </div>
               </div>
 
-              <input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." style={{marginBottom:8}}/>
-              <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginBottom:16}}>Demo tip: try "wonderwall", "creep", "hotel", "knocking", "hallelujah" or "wish" in the URL</p>
+              {/* Upload zone */}
+              <div
+                className={`upload-zone${dragOver ? " drag-over" : ""}${audioFile ? " has-file" : ""}`}
+                onClick={() => !analysing && fileInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleFileDrop}
+                style={{marginBottom:16}}
+              >
+                {!audioFile && !analysing && <>
+                  <div style={{fontSize:32,marginBottom:8,opacity:0.7}}>🎵</div>
+                  <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:4}}>Upload Audio File</div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>Drop an MP3, WAV, M4A, or OGG file here — or tap to browse</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.15)",marginTop:8}}>Real key detection using chroma analysis + BPM estimation</div>
+                </>}
+                {audioFile && !analysing && <>
+                  <div style={{fontSize:24,marginBottom:6}}>✓</div>
+                  <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:2}}>{audioFile.name}</div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>{(audioFile.size / (1024*1024)).toFixed(1)} MB · Tap to change file</div>
+                </>}
+                {analysing && <>
+                  <div style={{fontSize:24,marginBottom:10}}>🔬</div>
+                  <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:12}}>Analysing {audioFile?.name}</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4,textAlign:"left",maxWidth:280,margin:"0 auto"}}>
+                    {[
+                      { id:"decoding", label:"Decoding audio", icon:"🔊" },
+                      { id:"key", label:"Detecting key (Krumhansl-Schmuckler)", icon:"🎹" },
+                      { id:"bpm", label:"Estimating BPM (onset detection)", icon:"🥁" },
+                      { id:"chords", label:"Estimating chord progression", icon:"🎸" },
+                    ].map(phase => {
+                      const phases = ["decoding","key","bpm","chords","done"];
+                      const current = phases.indexOf(analysePhase);
+                      const mine = phases.indexOf(phase.id);
+                      const status = mine < current ? "done" : mine === current ? "active" : "pending";
+                      return (
+                        <div key={phase.id} className={`analyse-phase ${status}`}>
+                          <span>{status === "done" ? "✓" : status === "active" ? phase.icon : "○"}</span>
+                          <span>{phase.label}{status === "active" ? "…" : ""}</span>
+                          {status === "active" && <span style={{marginLeft:"auto",display:"flex",gap:3}}>{[0,1,2].map(i => <span key={i} style={{width:5,height:5,borderRadius:"50%",background:"var(--accent)",animation:`dotPulse 1.2s ease ${i*0.22}s infinite`}}/>)}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>}
+              </div>
+
+              {/* Audio player — shown after upload and analysis */}
+              {audioUrl && analysePhase === "done" && songData && (
+                <div className="audio-player" style={{marginBottom:16}}>
+                  <button className="play-btn" onClick={togglePlayback}>
+                    {isPlaying ? "❚❚" : "▶"}
+                  </button>
+                  <div className="progress-track" onClick={seekAudio}>
+                    <div className="progress-fill" style={{width:`${audioDuration ? (playbackTime/audioDuration)*100 : 0}%`}} />
+                  </div>
+                  <span className="time">{formatTime(playbackTime)}/{formatTime(audioDuration)}</span>
+                </div>
+              )}
+
+              {/* Analysis result summary */}
+              {audioFile && analysePhase === "done" && songData && (
+                <div style={{background:"rgba(99,202,148,0.06)",border:"1px solid rgba(99,202,148,0.2)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:10}}>DETECTED FROM AUDIO</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,textAlign:"center"}}>
+                    {[
+                      ["Key", songData.key, "var(--accent)"],
+                      ["BPM", songData.bpm, "#fff"],
+                      ["Chords", songData.chords.length, "var(--gold)"],
+                    ].map(([label, val, color]) => (
+                      <div key={label}>
+                        <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>{label}</div>
+                        <div className="display" style={{fontSize:22,fontWeight:700,color}}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center"}}>
+                    {songData.chords.map((c, i) => (
+                      <span key={i} style={{background:"rgba(255,255,255,0.06)",border:"1px solid var(--border)",borderRadius:8,padding:"4px 10px",fontSize:13,fontWeight:600,color:"var(--text)",fontFamily:"'Crimson Pro',serif"}}>{c}</span>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:8,marginTop:14}}>
+                    <button className="btn btn-primary" style={{flex:1}} onClick={() => setTab(2)}>⚡ View Results</button>
+                    <button className="btn btn-ghost" style={{fontSize:12}} onClick={() => { setAudioFile(null); setAudioBuffer(null); if(audioUrl) URL.revokeObjectURL(audioUrl); setAudioUrl(null); setAnalysePhase(""); setSongData(null); }}>Try another</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Play & Sing Mode ─────────────────────────────────────── */}
+              {audioUrl && analysePhase === "done" && songData && !playSingActive && !playSingDone && (
+                <div style={{background:"linear-gradient(135deg, rgba(99,202,148,0.08), rgba(96,165,250,0.08))",border:"1px solid rgba(99,202,148,0.25)",borderRadius:16,padding:20,marginBottom:16}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                    <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#63ca94,#60a5fa)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>🎤</div>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:15}}>Play & Sing</div>
+                      <div style={{fontSize:12,color:"var(--muted)"}}>Refine your key by singing along to this track</div>
+                    </div>
+                  </div>
+                  <p style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:14}}>
+                    Put on <strong style={{color:"rgba(255,255,255,0.7)"}}>headphones</strong> so the mic only hears your voice. The track plays in your ears while we track your pitch in real-time — then we'll calculate the perfect transposition for <em>this</em> song.
+                  </p>
+                  <button className="btn btn-primary" style={{width:"100%"}} onClick={startPlaySing}>
+                    🎧 Start Play & Sing
+                  </button>
+                </div>
+              )}
+
+              {/* Play & Sing Active Session */}
+              {playSingActive && (
+                <div className="card-accent fade-in" style={{borderRadius:16,padding:20,marginBottom:16,border:"1px solid rgba(99,202,148,0.3)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",animation:"pulseGlow 1.5s ease infinite"}}/>
+                      <span style={{fontWeight:700,fontSize:14,color:"var(--accent)"}}>Listening to your voice…</span>
+                    </div>
+                    <button className="btn btn-ghost" style={{padding:"6px 14px",fontSize:12,color:"#fca5a5",borderColor:"rgba(239,68,68,0.25)"}} onClick={stopPlaySing}>
+                      ⏹ Stop
+                    </button>
+                  </div>
+
+                  {/* Waveform */}
+                  <div style={{background:"rgba(0,0,0,0.25)",borderRadius:14,padding:"14px 18px",marginBottom:14,border:"1px solid rgba(255,255,255,0.05)"}}>
+                    <Waveform active={true} level={playSingLevel} tick={playSingTick}/>
+                  </div>
+
+                  {/* Current note display */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,textAlign:"center",marginBottom:14}}>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Singing now</div>
+                      <div className="display" style={{fontSize:28,fontWeight:700,color:playSingNote?"var(--accent)":"rgba(255,255,255,0.15)",transition:"all 0.15s"}}>
+                        {playSingNote ? `${midiToName(playSingNote)}${midiToOctave(playSingNote)}` : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Lowest</div>
+                      <div className="display" style={{fontSize:28,fontWeight:700,color:playSingLo?"#60a5fa":"rgba(255,255,255,0.15)"}}>
+                        {playSingLo ? `${midiToName(playSingLo)}${midiToOctave(playSingLo)}` : "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Highest</div>
+                      <div className="display" style={{fontSize:28,fontWeight:700,color:playSingHi?"#fb923c":"rgba(255,255,255,0.15)"}}>
+                        {playSingHi ? `${midiToName(playSingHi)}${midiToOctave(playSingHi)}` : "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Audio progress */}
+                  {audioElRef.current && (
+                    <div className="audio-player" style={{border:"none",background:"rgba(0,0,0,0.2)",padding:"10px 14px"}}>
+                      <span style={{fontSize:14}}>🎵</span>
+                      <div className="progress-track" onClick={seekAudio}>
+                        <div className="progress-fill" style={{width:`${audioDuration ? (playbackTime/audioDuration)*100 : 0}%`}} />
+                      </div>
+                      <span className="time">{formatTime(playbackTime)}/{formatTime(audioDuration)}</span>
+                    </div>
+                  )}
+
+                  <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",textAlign:"center",marginTop:10}}>
+                    🎧 Sing naturally — we're tracking your comfortable range on this song
+                  </p>
+                </div>
+              )}
+
+              {/* Play & Sing Results */}
+              {playSingDone && (
+                <div className="card-accent fade-in" style={{borderRadius:16,padding:20,marginBottom:16,border:"1px solid rgba(99,202,148,0.3)"}}>
+                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:12}}>PLAY & SING RESULTS</div>
+
+                  {playSingNotes.length > 10 ? (<>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12,textAlign:"center",marginBottom:14}}>
+                      {[
+                        ["Voice", voiceType?.type, "var(--accent)"],
+                        ["Your Key", vocalKey, "#fff"],
+                        ["Low", playSingLo ? `${midiToName(playSingLo)}${midiToOctave(playSingLo)}` : "—", "#60a5fa"],
+                        ["High", playSingHi ? `${midiToName(playSingHi)}${midiToOctave(playSingHi)}` : "—", "#fb923c"],
+                      ].map(([l, v, c]) => (
+                        <div key={l}>
+                          <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>{l}</div>
+                          <div className="display" style={{fontSize:19,fontWeight:700,color:c}}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Transposition recommendation */}
+                    <div style={{background:"rgba(0,0,0,0.25)",borderRadius:12,padding:14,marginBottom:14,textAlign:"center"}}>
+                      <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>Based on your singing on this track:</div>
+                      <div className="display" style={{fontSize:20,fontWeight:700,color:"var(--accent)"}}>
+                        {semitones === 0 ? "This song already fits your voice perfectly!" :
+                         `Transpose ${semitones > 0 ? "up" : "down"} ${Math.abs(semitones)} semitone${Math.abs(semitones)!==1?"s":""} to ${vocalKey}`}
+                      </div>
+                    </div>
+
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="btn btn-primary" style={{flex:1}} onClick={() => setTab(2)}>⚡ View Results</button>
+                      <button className="btn btn-ghost" style={{flex:1,fontSize:12}} onClick={() => { setPlaySingDone(false); setPlaySingNotes([]); }}>
+                        🔄 Sing Again
+                      </button>
+                    </div>
+                  </>) : (
+                    <div style={{textAlign:"center",padding:"16px 0"}}>
+                      <div style={{fontSize:28,marginBottom:8}}>🤔</div>
+                      <p style={{color:"var(--muted)",fontSize:13,marginBottom:14}}>
+                        We didn't capture enough singing. Make sure your mic is working and try singing louder or closer to the mic.
+                      </p>
+                      <button className="btn btn-primary" onClick={() => { setPlaySingDone(false); setPlaySingNotes([]); }}>
+                        🎤 Try Again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {!isPro && analysisCount >= LIMIT_FREE && (
                 <div style={{background:"rgba(232,196,106,0.08)",border:"1px solid rgba(232,196,106,0.2)",borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",gap:10,alignItems:"center"}}>
@@ -625,29 +1330,44 @@ export default function VoiceKeyV3() {
                 </div>
               )}
 
-              <button className="btn btn-primary" style={{width:"100%"}} disabled={!url.trim()||loading} onClick={analyseSong}>
-                {loading ? "⏳ Analysing…" : "🔍 Analyse & Transpose"}
-              </button>
+              {/* Divider */}
+              {!audioFile && !analysing && (
+                <div style={{display:"flex",alignItems:"center",gap:14,margin:"4px 0 16px"}}>
+                  <div style={{flex:1,height:1,background:"var(--border)"}} />
+                  <span style={{fontSize:11,color:"var(--muted)",textTransform:"uppercase",letterSpacing:2,fontWeight:600}}>or paste a url</span>
+                  <div style={{flex:1,height:1,background:"var(--border)"}} />
+                </div>
+              )}
+
+              {!audioFile && !analysing && <>
+                <input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." style={{marginBottom:8}}/>
+                <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginBottom:16}}>Demo tip: try "wonderwall", "creep", "hotel", "knocking", "hallelujah" or "wish" in the URL</p>
+                <button className="btn btn-primary" style={{width:"100%"}} disabled={!url.trim()||loading} onClick={analyseSong}>
+                  {loading ? "⏳ Analysing…" : "🔍 Analyse & Transpose"}
+                </button>
+              </>}
             </div>
 
             {/* Song browser */}
-            <div className="card fade-in">
-              <div className="label">Quick picks · tap to select</div>
-              {Object.entries(SONGS).filter(([k]) => k!=="default").map(([k, s]) => (
-                <button key={k} onClick={() => setUrl(`https://youtube.com/watch?v=${k}`)}
-                  style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",background:url.includes(k)?"rgba(99,202,148,0.08)":"rgba(255,255,255,0.02)",border:`1px solid ${url.includes(k)?"rgba(99,202,148,0.25)":"rgba(255,255,255,0.06)"}`,borderRadius:12,width:"100%",marginBottom:7,cursor:"pointer",textAlign:"left",transition:"all 0.15s",fontFamily:"inherit"}}>
-                  <div style={{width:36,height:36,borderRadius:8,background:"rgba(99,202,148,0.09)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🎵</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:600,fontSize:13,color:url.includes(k)?"var(--accent)":"rgba(255,255,255,0.85)"}}>{s.title}</div>
-                    <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · {s.key} · {s.bpm} BPM</div>
-                  </div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                    <span className="badge badge-diff">{s.difficulty}</span>
-                    <span className="badge badge-diff">{s.genre}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            {!audioFile && !analysing && (
+              <div className="card fade-in">
+                <div className="label">Quick picks · tap to select</div>
+                {Object.entries(SONGS).filter(([k]) => k!=="default").map(([k, s]) => (
+                  <button key={k} onClick={() => setUrl(`https://youtube.com/watch?v=${k}`)}
+                    style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",background:url.includes(k)?"rgba(99,202,148,0.08)":"rgba(255,255,255,0.02)",border:`1px solid ${url.includes(k)?"rgba(99,202,148,0.25)":"rgba(255,255,255,0.06)"}`,borderRadius:12,width:"100%",marginBottom:7,cursor:"pointer",textAlign:"left",transition:"all 0.15s",fontFamily:"inherit"}}>
+                    <div style={{width:36,height:36,borderRadius:8,background:"rgba(99,202,148,0.09)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🎵</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:13,color:url.includes(k)?"var(--accent)":"rgba(255,255,255,0.85)"}}>{s.title}</div>
+                      <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · {s.key} · {s.bpm} BPM</div>
+                    </div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                      <span className="badge badge-diff">{s.difficulty}</span>
+                      <span className="badge badge-diff">{s.genre}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </>}
 
           {/* ── TAB 2: RESULTS ────────────────────────────────────────────── */}
@@ -780,6 +1500,22 @@ export default function VoiceKeyV3() {
                   </div>
                 </div>
               </div>
+
+              {/* Audio playback in practice */}
+              {audioUrl && (
+                <div className="audio-player" style={{marginBottom:14}}>
+                  <button className="play-btn" onClick={togglePlayback}>
+                    {isPlaying ? "❚❚" : "▶"}
+                  </button>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"var(--text)",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{audioFile?.name || "Uploaded track"}</div>
+                    <div className="progress-track" onClick={seekAudio}>
+                      <div className="progress-fill" style={{width:`${audioDuration ? (playbackTime/audioDuration)*100 : 0}%`}} />
+                    </div>
+                  </div>
+                  <span className="time">{formatTime(playbackTime)}/{formatTime(audioDuration)}</span>
+                </div>
+              )}
 
               {/* BPM slider */}
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
