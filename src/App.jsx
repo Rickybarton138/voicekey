@@ -644,7 +644,7 @@ const SetlistModal = ({ list, onLoad, onRemove, onClose }) => (
               <div style={{width:38,height:38,borderRadius:9,background:"rgba(99,202,148,0.1)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>🎵</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.title}</div>
-                <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · Your key: <span style={{color:"var(--accent)"}}>{s.yourKey}</span> · {s.semitones > 0 ? "+" : ""}{s.semitones} semitones</div>
+                <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · Your key: <span style={{color:"var(--accent)"}}>{s.yourKey}</span> · {s.semitones === 0 ? "no shift" : `${s.semitones > 0 ? "up" : "down"} ${Math.abs(s.semitones)} step${Math.abs(s.semitones)!==1?"s":""}`}</div>
               </div>
               <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 10px",color:"var(--accent)"}} onClick={() => onLoad(s)}>Load</button>
               <button onClick={() => onRemove(i)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,80,80,0.6)",fontSize:16,padding:"4px"}}>×</button>
@@ -662,7 +662,7 @@ const UpgradeModal = ({ onClose, feature }) => (
     <div className="fade-in card" style={{maxWidth:420,width:"100%",textAlign:"center",padding:36}}>
       <div style={{fontSize:44,marginBottom:16}}>⭐</div>
       <div style={{fontFamily:"'Crimson Pro',serif",fontSize:26,fontWeight:700,marginBottom:8}}>Unlock VoiceKey Pro</div>
-      <p style={{color:"var(--muted)",fontSize:14,lineHeight:1.7,marginBottom:24}}>You've used your 3 free analyses this month. Upgrade to get unlimited songs, AI Coach, Practice Mode, Capo Advisor and Setlist Manager.</p>
+      <p style={{color:"var(--muted)",fontSize:14,lineHeight:1.7,marginBottom:24}}>You've used your 3 free songs this month. Go Pro to analyse unlimited songs, get AI coaching, and save your favourites.</p>
       <div style={{display:"flex",gap:10,marginBottom:20}}>
         <div style={{flex:1,background:"rgba(99,202,148,0.07)",border:"1px solid rgba(99,202,148,0.2)",borderRadius:14,padding:16}}>
           <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Monthly</div>
@@ -678,7 +678,7 @@ const UpgradeModal = ({ onClose, feature }) => (
         </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
-        {["Unlimited song analyses","AI Song Coach (Claude-powered)","Practice Mode + Metronome","Smart Capo Advisor","Setlist Manager","Priority support"].map(f => (
+        {["Analyse unlimited songs","AI singing & guitar coach","Practice mode with metronome","Smart capo suggestions","Save songs to your setlist","Priority support"].map(f => (
           <div key={f} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:"rgba(255,255,255,0.7)"}}>
             <span style={{color:"var(--accent)",fontSize:14}}>✓</span>{f}
           </div>
@@ -1174,15 +1174,15 @@ export default function VoiceKeyV3() {
           {/* ── TAB 0: VOICE ──────────────────────────────────────────────── */}
           {tab === 0 && <>
             <div className="card fade-in">
-              <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:6}}>Detect Your Voice</div>
-              <p style={{color:"var(--muted)",fontSize:13,marginBottom:22,lineHeight:1.65}}>We'll listen as you sing your lowest then highest comfortable note — takes about 8 seconds.</p>
+              <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:6}}>Find Your Voice</div>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:22,lineHeight:1.65}}>Sing your lowest comfortable note, then your highest — we'll figure out your singing range and which songs suit you best. Takes about 8 seconds.</p>
 
               <div style={{background:"rgba(0,0,0,0.25)",borderRadius:14,padding:"14px 18px",marginBottom:16,border:"1px solid rgba(255,255,255,0.05)"}}>
                 <Waveform active={recording} level={audioLevel} tick={tick}/>
                 {recPhase !== "idle" && (
                   <p style={{textAlign:"center",margin:"10px 0 0",fontSize:13,fontWeight:600,
                     color:{warmup:"var(--muted)",low:"#60a5fa",high:"#fb923c",done:"var(--accent)"}[recPhase]}}>
-                    {{warmup:"⏳ Calibrating microphone…",low:"🔽 Sing your LOWEST comfortable note — hold it",high:"🔼 Now your HIGHEST — keep holding",done:"✓ Voice profile captured!"}[recPhase]}
+                    {{warmup:"⏳ Getting your mic ready…",low:"🔽 Sing as LOW as you comfortably can — hold it",high:"🔼 Now go as HIGH as you can — keep holding",done:"✓ Got it! We know your voice now"}[recPhase]}
                   </p>
                 )}
               </div>
@@ -1201,14 +1201,14 @@ export default function VoiceKeyV3() {
               {voiceOK && (
                 <div className="card-accent" style={{borderRadius:14,padding:18,marginBottom:18}}>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12,textAlign:"center",marginBottom:14}}>
-                    {[["Type",voiceType?.type,"var(--accent)"],["Key",vocalKey+" major","#fff"],["Low",`${midiToName(loNote)}${midiToOctave(loNote)}`,"#60a5fa"],["High",`${midiToName(hiNote)}${midiToOctave(hiNote)}`,"#fb923c"]].map(([l,v,c])=>(
+                    {[["Voice",voiceType?.type,"var(--accent)"],["Best key",vocalKey,"#fff"],["Lowest note",`${midiToName(loNote)}${midiToOctave(loNote)}`,"#60a5fa"],["Highest note",`${midiToName(hiNote)}${midiToOctave(hiNote)}`,"#fb923c"]].map(([l,v,c])=>(
                       <div key={l}><div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>{l}</div>
                       <div className="display" style={{fontSize:19,fontWeight:700,color:c}}>{v}</div></div>
                     ))}
                   </div>
                   {/* Keyboard range visualiser */}
                   <div style={{background:"rgba(0,0,0,0.2)",borderRadius:10,padding:"8px 10px"}}>
-                    <div style={{fontSize:9,color:"var(--muted)",marginBottom:5,textTransform:"uppercase",letterSpacing:1}}>Your range on keyboard</div>
+                    <div style={{fontSize:9,color:"var(--muted)",marginBottom:5,textTransform:"uppercase",letterSpacing:1}}>Notes you can hit</div>
                     <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
                       {NOTES.map((n,i) => {
                         const lo_i = ((loNote%12)+12)%12, hi_i = ((hiNote%12)+12)%12;
@@ -1219,7 +1219,7 @@ export default function VoiceKeyV3() {
                     </div>
                   </div>
                   <p style={{fontSize:12,color:"var(--muted)",marginTop:12,textAlign:"center"}}>
-                    Similar voice to: <strong style={{color:"rgba(255,255,255,0.7)"}}>{voiceType?.famous}</strong>
+                    You sing in a similar range to: <strong style={{color:"rgba(255,255,255,0.7)"}}>{voiceType?.famous}</strong>
                   </p>
                 </div>
               )}
@@ -1234,7 +1234,7 @@ export default function VoiceKeyV3() {
 
             {/* Voice types reference */}
             <div className="card fade-in">
-              <div className="label">Voice type reference</div>
+              <div className="label">Where does your voice sit?</div>
               {VOICE_TYPES.map(vt => (
                 <div key={vt.type} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 12px",borderRadius:10,marginBottom:5,background:voiceType?.type===vt.type?"rgba(99,202,148,0.08)":"transparent",border:`1px solid ${voiceType?.type===vt.type?"rgba(99,202,148,0.2)":"transparent"}`,transition:"all 0.2s"}}>
                   <div style={{width:8,height:8,borderRadius:"50%",background:voiceType?.type===vt.type?"var(--accent)":"rgba(255,255,255,0.2)",flexShrink:0}}/>
@@ -1253,13 +1253,13 @@ export default function VoiceKeyV3() {
           {tab === 1 && <>
             <div className="card fade-in">
               <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:6}}>Analyse a Song</div>
-              <p style={{color:"var(--muted)",fontSize:13,marginBottom:18,lineHeight:1.65}}>Upload an audio file for real key and BPM detection, or paste a YouTube URL to match from our library.</p>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:18,lineHeight:1.65}}>Upload a song and we'll figure out what key it's in, how fast it is, and what chords are being played — then adjust everything to fit your voice.</p>
 
               <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(99,202,148,0.07)",border:"1px solid rgba(99,202,148,0.15)",borderRadius:12,padding:"10px 14px",marginBottom:18}}>
                 <span style={{fontSize:18}}>🎤</span>
                 <div>
                   <div style={{fontSize:10,color:"var(--muted)",textTransform:"uppercase",letterSpacing:1}}>Your voice</div>
-                  <div style={{fontWeight:600,fontSize:14}}>{voiceType?.type} · Best key: <span style={{color:"var(--accent)"}}>{vocalKey}</span></div>
+                  <div style={{fontWeight:600,fontSize:14}}>{voiceType?.type} · You sound best in: <span style={{color:"var(--accent)"}}>{vocalKey}</span></div>
                 </div>
               </div>
 
@@ -1276,7 +1276,7 @@ export default function VoiceKeyV3() {
                   <div style={{fontSize:32,marginBottom:8,opacity:0.7}}>🎵</div>
                   <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:4}}>Upload Audio File</div>
                   <div style={{fontSize:12,color:"var(--muted)"}}>Drop an MP3, WAV, M4A, or OGG file here — or tap to browse</div>
-                  <div style={{fontSize:11,color:"rgba(255,255,255,0.15)",marginTop:8}}>Real key detection using chroma analysis + BPM estimation</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.15)",marginTop:8}}>We'll listen to your song and work out the key, speed, and chords automatically</div>
                 </>}
                 {audioFile && !analysing && <>
                   <div style={{fontSize:24,marginBottom:6}}>✓</div>
@@ -1288,10 +1288,10 @@ export default function VoiceKeyV3() {
                   <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:12}}>Analysing {audioFile?.name}</div>
                   <div style={{display:"flex",flexDirection:"column",gap:4,textAlign:"left",maxWidth:280,margin:"0 auto"}}>
                     {[
-                      { id:"decoding", label:"Decoding audio", icon:"🔊" },
-                      { id:"key", label:"Detecting key (Krumhansl-Schmuckler)", icon:"🎹" },
-                      { id:"bpm", label:"Estimating BPM (onset detection)", icon:"🥁" },
-                      { id:"chords", label:"Estimating chord progression", icon:"🎸" },
+                      { id:"decoding", label:"Loading your song", icon:"🔊" },
+                      { id:"key", label:"Finding the key", icon:"🎹" },
+                      { id:"bpm", label:"Working out the speed", icon:"🥁" },
+                      { id:"chords", label:"Figuring out the chords", icon:"🎸" },
                     ].map(phase => {
                       const phases = ["decoding","key","bpm","chords","done"];
                       const current = phases.indexOf(analysePhase);
@@ -1325,11 +1325,11 @@ export default function VoiceKeyV3() {
               {/* Analysis result summary */}
               {audioFile && analysePhase === "done" && songData && (
                 <div style={{background:"rgba(99,202,148,0.06)",border:"1px solid rgba(99,202,148,0.2)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
-                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:10}}>DETECTED FROM AUDIO</div>
+                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:10}}>WHAT WE FOUND</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,textAlign:"center"}}>
                     {[
                       ["Key", songData.key, "var(--accent)"],
-                      ["BPM", songData.bpm, "#fff"],
+                      ["Speed", `${songData.bpm} bpm`, "#fff"],
                       ["Chords", songData.chords.length, "var(--gold)"],
                     ].map(([label, val, color]) => (
                       <div key={label}>
@@ -1361,7 +1361,7 @@ export default function VoiceKeyV3() {
                     </div>
                   </div>
                   <p style={{fontSize:12,color:"var(--muted)",lineHeight:1.6,marginBottom:14}}>
-                    Put on <strong style={{color:"rgba(255,255,255,0.7)"}}>headphones</strong> so the mic only hears your voice. The track plays in your ears while we track your pitch in real-time — then we'll calculate the perfect transposition for <em>this</em> song.
+                    Put on <strong style={{color:"rgba(255,255,255,0.7)"}}>headphones</strong> so the mic only hears your voice. The song plays in your ears while you sing along — we'll track how high and low you actually sing, then adjust the chords to match.
                   </p>
                   <button className="btn btn-primary" style={{width:"100%"}} onClick={startPlaySing}>
                     🎧 Start Play & Sing
@@ -1421,7 +1421,7 @@ export default function VoiceKeyV3() {
                   )}
 
                   <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",textAlign:"center",marginTop:10}}>
-                    🎧 Sing naturally — we're tracking your comfortable range on this song
+                    🎧 Just sing naturally — we're listening to find your sweet spot on this song
                   </p>
                 </div>
               )}
@@ -1435,9 +1435,9 @@ export default function VoiceKeyV3() {
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12,textAlign:"center",marginBottom:14}}>
                       {[
                         ["Voice", voiceType?.type, "var(--accent)"],
-                        ["Your Key", vocalKey, "#fff"],
-                        ["Low", playSingLo ? `${midiToName(playSingLo)}${midiToOctave(playSingLo)}` : "—", "#60a5fa"],
-                        ["High", playSingHi ? `${midiToName(playSingHi)}${midiToOctave(playSingHi)}` : "—", "#fb923c"],
+                        ["Best key", vocalKey, "#fff"],
+                        ["Lowest", playSingLo ? `${midiToName(playSingLo)}${midiToOctave(playSingLo)}` : "—", "#60a5fa"],
+                        ["Highest", playSingHi ? `${midiToName(playSingHi)}${midiToOctave(playSingHi)}` : "—", "#fb923c"],
                       ].map(([l, v, c]) => (
                         <div key={l}>
                           <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>{l}</div>
@@ -1448,10 +1448,10 @@ export default function VoiceKeyV3() {
 
                     {/* Transposition recommendation */}
                     <div style={{background:"rgba(0,0,0,0.25)",borderRadius:12,padding:14,marginBottom:14,textAlign:"center"}}>
-                      <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>Based on your singing on this track:</div>
+                      <div style={{fontSize:11,color:"var(--muted)",marginBottom:6}}>Based on how you sang along:</div>
                       <div className="display" style={{fontSize:20,fontWeight:700,color:"var(--accent)"}}>
                         {semitones === 0 ? "This song already fits your voice perfectly!" :
-                         `Transpose ${semitones > 0 ? "up" : "down"} ${Math.abs(semitones)} semitone${Math.abs(semitones)!==1?"s":""} to ${vocalKey}`}
+                         `Shift ${semitones > 0 ? "up" : "down"} ${Math.abs(semitones)} step${Math.abs(semitones)!==1?"s":""} to key of ${vocalKey}`}
                       </div>
                     </div>
 
@@ -1497,7 +1497,7 @@ export default function VoiceKeyV3() {
 
               {!audioFile && !analysing && <>
                 <input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." style={{marginBottom:8}}/>
-                <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginBottom:16}}>Demo tip: try "wonderwall", "creep", "hotel", "knocking", "hallelujah" or "wish" in the URL</p>
+                <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginBottom:16}}>Try a song name like "wonderwall" or "hallelujah" to demo the URL mode</p>
                 <button className="btn btn-primary" style={{width:"100%"}} disabled={!url.trim()||loading} onClick={analyseSong}>
                   {loading ? "⏳ Analysing…" : "🔍 Analyse & Transpose"}
                 </button>
@@ -1507,14 +1507,14 @@ export default function VoiceKeyV3() {
             {/* Song browser */}
             {!audioFile && !analysing && (
               <div className="card fade-in">
-                <div className="label">Quick picks · tap to select</div>
+                <div className="label">Popular songs — tap to try one</div>
                 {Object.entries(SONGS).filter(([k]) => k!=="default").map(([k, s]) => (
                   <button key={k} onClick={() => setUrl(`https://youtube.com/watch?v=${k}`)}
                     style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",background:url.includes(k)?"rgba(99,202,148,0.08)":"rgba(255,255,255,0.02)",border:`1px solid ${url.includes(k)?"rgba(99,202,148,0.25)":"rgba(255,255,255,0.06)"}`,borderRadius:12,width:"100%",marginBottom:7,cursor:"pointer",textAlign:"left",transition:"all 0.15s",fontFamily:"inherit"}}>
                     <div style={{width:36,height:36,borderRadius:8,background:"rgba(99,202,148,0.09)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0}}>🎵</div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontWeight:600,fontSize:13,color:url.includes(k)?"var(--accent)":"rgba(255,255,255,0.85)"}}>{s.title}</div>
-                      <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · {s.key} · {s.bpm} BPM</div>
+                      <div style={{fontSize:11,color:"var(--muted)"}}>{s.artist} · Key of {s.key} · {s.bpm} bpm</div>
                     </div>
                     <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"flex-end"}}>
                       <span className="badge badge-diff">{s.difficulty}</span>
@@ -1531,12 +1531,12 @@ export default function VoiceKeyV3() {
             <div className="card card-accent fade-in">
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
                 <div>
-                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:4}}>SONG ANALYSIS</div>
+                  <div style={{fontSize:10,letterSpacing:2,color:"rgba(99,202,148,0.6)",fontWeight:600,marginBottom:4}}>YOUR SONG</div>
                   <div className="display" style={{fontSize:24,fontWeight:700,lineHeight:1.15}}>{songData.title}</div>
-                  <div style={{fontSize:13,color:"var(--muted)",marginTop:3}}>{songData.artist} · {songData.genre} · {songData.bpm} BPM</div>
+                  <div style={{fontSize:13,color:"var(--muted)",marginTop:3}}>{songData.artist} · {songData.genre} · {songData.bpm} bpm</div>
                 </div>
                 <div style={{textAlign:"center",background:"rgba(0,0,0,0.25)",borderRadius:12,padding:"10px 16px"}}>
-                  <div style={{fontSize:9,color:"var(--muted)",marginBottom:2}}>YOUR KEY</div>
+                  <div style={{fontSize:9,color:"var(--muted)",marginBottom:2}}>SING IN</div>
                   <div className="display" style={{fontSize:40,fontWeight:700,color:"var(--accent)",lineHeight:1}}>{vocalKey}</div>
                 </div>
               </div>
@@ -1544,12 +1544,12 @@ export default function VoiceKeyV3() {
               {/* Key shift visualiser */}
               <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(0,0,0,0.3)",borderRadius:14,padding:16,marginBottom:14}}>
                 <div style={{flex:1,textAlign:"center"}}>
-                  <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Original</div>
+                  <div style={{fontSize:9,color:"var(--muted)",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Song's key</div>
                   <div className="display" style={{fontSize:30,fontWeight:700,color:"rgba(255,255,255,0.35)"}}>{songData.key}</div>
                 </div>
                 <div style={{textAlign:"center",padding:"9px 14px",borderRadius:11,background:semitones===0?"rgba(99,202,148,0.14)":"rgba(232,196,106,0.1)",border:`1px solid ${semitones===0?"rgba(99,202,148,0.3)":"rgba(232,196,106,0.25)"}`}}>
                   <div style={{fontSize:12,fontWeight:700,color:semitones===0?"var(--accent)":"var(--gold)",whiteSpace:"nowrap"}}>
-                    {semitones===0 ? "✓ Perfect fit" : `${semitones>0?"▲ Up":"▼ Down"} ${Math.abs(semitones)} st`}
+                    {semitones===0 ? "✓ Already perfect for you" : `${semitones>0?"▲ Shift up":"▼ Shift down"} ${Math.abs(semitones)} step${Math.abs(semitones)!==1?"s":""}`}
                   </div>
                 </div>
                 <div style={{flex:1,textAlign:"center"}}>
@@ -1563,8 +1563,8 @@ export default function VoiceKeyV3() {
                 <div style={{background:"rgba(232,196,106,0.07)",border:"1px solid rgba(232,196,106,0.2)",borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",gap:10,alignItems:"flex-start"}}>
                   <span style={{fontSize:20}}>🎸</span>
                   <div>
-                    <div style={{fontWeight:700,fontSize:13,color:"var(--gold)",marginBottom:3}}>Capo on Fret {capoFret} — easiest option</div>
-                    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.55}}>Put your capo on fret {capoFret} and play the original <strong style={{color:"rgba(255,255,255,0.65)"}}>{songData.key}</strong> chord shapes. The capo automatically puts you in {vocalKey}. No need to learn new chord shapes!</div>
+                    <div style={{fontWeight:700,fontSize:13,color:"var(--gold)",marginBottom:3}}>Shortcut: Capo on fret {capoFret}</div>
+                    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.55}}>Clip a capo on fret {capoFret} and play the same chord shapes as the original ({songData.key}). The capo does the shifting for you — no new chords to learn!</div>
                   </div>
                 </div>
               )}
@@ -1604,7 +1604,7 @@ export default function VoiceKeyV3() {
               })()}
 
               {/* Chords */}
-              <div className="label">Transposed chords — your key of {vocalKey}</div>
+              <div className="label">Chords adjusted to your voice — key of {vocalKey}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
                 {songData.chords.map((c,i) => {
                   const tc = transposedChords[i];
@@ -1625,7 +1625,7 @@ export default function VoiceKeyV3() {
 
               {/* Fine tune */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,padding:"12px 0",borderTop:"1px solid var(--border)",marginTop:4}}>
-                <span style={{fontSize:12,color:"var(--muted)"}}>Fine tune semitones:</span>
+                <span style={{fontSize:12,color:"var(--muted)"}}>Adjust up or down:</span>
                 <button className="btn btn-ghost" style={{padding:"6px 14px",fontSize:16}} onClick={() => setSemitones(s=>s-1)}>−</button>
                 <div style={{textAlign:"center",minWidth:50}}>
                   <div className="display" style={{fontSize:24,fontWeight:700,color:semitones===0?"var(--accent)":"var(--gold)"}}>{semitones>0?"+":""}{semitones}</div>
@@ -1649,7 +1649,7 @@ export default function VoiceKeyV3() {
 
             {/* Transpose reference */}
             <div className="card fade-in">
-              <div className="label">All 12 keys from original {songData.key}</div>
+              <div className="label">Try a different key — tap to switch</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                 {NOTES.map((n,i) => {
                   const st = semitonesBetween(songData.key.replace(/m|maj|7/g,""), n);
@@ -1662,7 +1662,7 @@ export default function VoiceKeyV3() {
                   );
                 })}
               </div>
-              <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:12}}>Tap any key to instantly see how far it is from the original and update all chords</p>
+              <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:12}}>Tap any key to hear how it would sound — all chords update instantly</p>
             </div>
           </>}
 
@@ -1673,7 +1673,7 @@ export default function VoiceKeyV3() {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
                 <div>
                   <div className="display" style={{fontSize:20,fontWeight:700}}>{songData.title}</div>
-                  <div style={{fontSize:12,color:"var(--muted)"}}>Key of {vocalKey} · {songData.bpm} BPM</div>
+                  <div style={{fontSize:12,color:"var(--muted)"}}>Your key: {vocalKey} · {songData.bpm} bpm</div>
                 </div>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
                   <button onClick={() => setMetronome(m=>!m)} style={{padding:"8px 12px",borderRadius:10,border:`1px solid ${metronome?"rgba(99,202,148,0.4)":"var(--border)"}`,background:metronome?"rgba(99,202,148,0.1)":"rgba(255,255,255,0.04)",cursor:"pointer",fontSize:12,fontWeight:600,color:metronome?"var(--accent)":"var(--muted)",fontFamily:"inherit",transition:"all 0.2s"}}>
@@ -1711,9 +1711,9 @@ export default function VoiceKeyV3() {
 
               {/* Current chord spotlight */}
               <div className="card-accent" style={{borderRadius:16,padding:28,textAlign:"center",marginBottom:14}} onClick={() => setPracticeIdx(i => (i+1)%transposedChords.length)}>
-                <div style={{fontSize:10,color:"rgba(99,202,148,0.5)",letterSpacing:2,marginBottom:10}}>CURRENT — TAP TO ADVANCE</div>
+                <div style={{fontSize:10,color:"rgba(99,202,148,0.5)",letterSpacing:2,marginBottom:10}}>PLAY THIS CHORD — TAP FOR NEXT</div>
                 <div className="display" style={{fontSize:80,fontWeight:700,color:"var(--accent)",lineHeight:1,marginBottom:8}}>{transposedChords[practiceIdx]}</div>
-                {semitones!==0 && <div style={{fontSize:13,color:"var(--muted)"}}>originally: <span style={{color:"rgba(255,255,255,0.45)"}}>{songData.chords[practiceIdx]}</span></div>}
+                {semitones!==0 && <div style={{fontSize:13,color:"var(--muted)"}}>original was: <span style={{color:"rgba(255,255,255,0.45)"}}>{songData.chords[practiceIdx]}</span></div>}
                 <div style={{marginTop:16,display:"flex",justifyContent:"center"}}>
                   <ChordDiagram chord={transposedChords[practiceIdx]} size={88}/>
                 </div>
@@ -1763,14 +1763,14 @@ export default function VoiceKeyV3() {
 
             {/* Practice tips */}
             <div className="card fade-in">
-              <div className="label">Tips for {voiceType?.type}s singing this song</div>
+              <div className="label">Tips to nail this song</div>
               <div style={{display:"flex",flexDirection:"column",gap:9}}>
                 {[
-                  ["🎤",`Hum the melody in ${vocalKey} before picking up the guitar — lock your ear in first`],
-                  ["🐢",`Start at 60% speed (${Math.round(bpm*0.6)} BPM) — muscle memory beats speed`],
-                  ["🎸",capoFret?`Capo fret ${capoFret}: play original ${songData.key} shapes in your key ${vocalKey}`:`No capo needed — play the transposed chords shown`],
-                  ["🎤",`Record yourself once — you'll immediately hear if the key fits your voice`],
-                  ["🔁",`Loop the hardest chord change until it's automatic before moving on`],
+                  ["🎤",`Hum the tune in your key (${vocalKey}) before picking up the guitar — get the melody in your head first`],
+                  ["🐢",`Start slow (around ${Math.round(bpm*0.6)} bpm) — getting it right slowly is better than getting it wrong fast`],
+                  ["🎸",capoFret?`Stick a capo on fret ${capoFret} and play the original ${songData.key} shapes — easiest way to play in your key`:`No capo needed — just play the chords shown above`],
+                  ["🎤",`Record yourself once — you'll instantly hear if it sounds right or needs tweaking`],
+                  ["🔁",`If a chord change feels hard, just loop those two chords over and over until it clicks`],
                 ].map(([icon,tip],i) => (
                   <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 12px",background:"rgba(255,255,255,0.02)",borderRadius:10}}>
                     <span style={{fontSize:16,flexShrink:0}}>{icon}</span>
@@ -1788,8 +1788,8 @@ export default function VoiceKeyV3() {
           {(tab===1||tab===2||tab===3) && !voiceOK && (
             <div className="card fade-in" style={{textAlign:"center",padding:"48px 24px"}}>
               <div style={{fontSize:40,marginBottom:16}}>🎤</div>
-              <p style={{color:"var(--muted)",fontSize:14,marginBottom:20}}>Detect your voice first to unlock everything</p>
-              <button className="btn btn-primary" onClick={()=>setTab(0)}>← Start Voice Detection</button>
+              <p style={{color:"var(--muted)",fontSize:14,marginBottom:20}}>We need to hear your voice first — takes 8 seconds</p>
+              <button className="btn btn-primary" onClick={()=>setTab(0)}>← Find My Voice</button>
             </div>
           )}
           {(tab===2||tab===3) && voiceOK && !songOK && (
