@@ -692,7 +692,13 @@ const UpgradeModal = ({ onClose, feature }) => (
 
 // ── Main App ─────────────────────────────────────────────────────────────────
 export default function VoiceKeyV3() {
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem("voicekey_voice");
+      if (saved) return 1; // skip to Pick Song if voice already saved
+    } catch {}
+    return 0;
+  });
   const [tick, setTick] = useState(0);
 
   // Voice state
@@ -747,6 +753,15 @@ export default function VoiceKeyV3() {
   const [savedMsg, setSavedMsg] = useState(false);
   const [isPro] = useState(true); // toggle to false to re-enable freemium gate
 
+  // Voice upload state
+  const [voiceUploading, setVoiceUploading] = useState(false);
+  const [voiceUploadFile, setVoiceUploadFile] = useState(null);
+
+  // Voice sessions counter
+  const [voiceSessions, setVoiceSessions] = useState(() => {
+    try { return parseInt(localStorage.getItem("voicekey_sessions") || "0", 10); } catch { return 0; }
+  });
+
   // UX / onboarding state
   const [welcomed, setWelcomed] = useState(() => localStorage.getItem("voicekey_welcomed") === "true");
   const [chordGuideShown, setChordGuideShown] = useState(() => localStorage.getItem("voicekey_chordGuideShown") === "true");
@@ -770,6 +785,7 @@ export default function VoiceKeyV3() {
   const playSingAnalyserRef = useRef(null);
   const playSingAnimRef = useRef(null);
   const playSingNotesRef = useRef([]);
+  const voiceFileInputRef = useRef(null);
 
   // ── localStorage: Restore on mount ─────────────────────────────────────────
   useEffect(() => {
@@ -787,6 +803,8 @@ export default function VoiceKeyV3() {
       if (savedSetlist) setSetlist(JSON.parse(savedSetlist));
       const savedCount = localStorage.getItem("voicekey_analysisCount");
       if (savedCount) setAnalysisCount(parseInt(savedCount, 10) || 0);
+      const savedSessions = localStorage.getItem("voicekey_sessions");
+      if (savedSessions) setVoiceSessions(parseInt(savedSessions, 10) || 0);
     } catch {}
   }, []);
 
@@ -798,6 +816,11 @@ export default function VoiceKeyV3() {
       } catch {}
     }
   }, [loNote, hiNote, voiceType, vocalKey, recPhase]);
+
+  // ── localStorage: Save voice sessions count ─────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem("voicekey_sessions", String(voiceSessions)); } catch {}
+  }, [voiceSessions]);
 
   // ── localStorage: Save setlist on change ───────────────────────────────────
   useEffect(() => {
@@ -886,6 +909,7 @@ export default function VoiceKeyV3() {
     const vt = detectVoiceType(lo, hi);
     setVoiceType(vt);
     setVocalKey(midiToName(Math.round((lo+hi)/2)));
+    setVoiceSessions(s => s + 1);
   };
 
   const startVoiceDetect = async () => {
@@ -922,6 +946,49 @@ export default function VoiceKeyV3() {
     } catch {
       setMicFailed(true);
     }
+  };
+
+  const analyseVoiceRecording = async (file) => {
+    setVoiceUploading(true);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const decoded = await ctx.decodeAudioData(arrayBuffer);
+      ctx.close();
+
+      const channelData = decoded.getChannelData(0);
+      const sampleRate = decoded.sampleRate;
+      const chunkSize = 2048;
+      const notes = [];
+
+      for (let i = 0; i < channelData.length - chunkSize; i += chunkSize) {
+        const chunk = channelData.slice(i, i + chunkSize);
+        const freq = autoCorrelate(chunk, sampleRate);
+        if (freq > 60 && freq < 1200) {
+          const midi = noteFromFreq(freq);
+          if (midi > 28 && midi < 96) notes.push(midi);
+        }
+      }
+
+      if (notes.length > 10) {
+        const sorted = [...notes].sort((a, b) => a - b);
+        const lo = sorted[Math.floor(sorted.length * 0.05)];
+        const hi = sorted[Math.floor(sorted.length * 0.95)];
+        setLoNote(lo);
+        setHiNote(hi);
+        const vt = detectVoiceType(lo, hi);
+        setVoiceType(vt);
+        setVocalKey(midiToName(Math.round((lo + hi) / 2)));
+        setRecPhase("done");
+        setVoiceSessions(s => s + 1);
+      } else {
+        alert("We couldn't detect enough singing in that recording. Try a clip where you're singing clearly.");
+      }
+    } catch (err) {
+      console.error("Voice recording analysis failed:", err);
+      alert("Could not process that audio file. Please try a different recording.");
+    }
+    setVoiceUploading(false);
   };
 
   const analyseSong = async () => {
@@ -1118,14 +1185,23 @@ export default function VoiceKeyV3() {
       setPlaySingHi(hi);
       setPlaySingNotes([...notes]);
 
-      // Update the main voice profile from this session
-      setLoNote(lo);
-      setHiNote(hi);
-      const vt = detectVoiceType(lo, hi);
+      // Merge with existing profile — expand range, weighted average for center
+      const existingLo = loNote || lo;
+      const existingHi = hiNote || hi;
+      const mergedLo = Math.min(existingLo, lo);
+      const mergedHi = Math.max(existingHi, hi);
+      const existingMid = loNote && hiNote ? Math.round((loNote + hiNote) / 2) : Math.round((lo + hi) / 2);
+      const newMid = Math.round((lo + hi) / 2);
+      const weightedMid = Math.round(existingMid * 0.7 + newMid * 0.3);
+
+      setLoNote(mergedLo);
+      setHiNote(mergedHi);
+      const vt = detectVoiceType(mergedLo, mergedHi);
       setVoiceType(vt);
-      const newKey = midiToName(Math.round((lo + hi) / 2));
+      const newKey = midiToName(weightedMid);
       setVocalKey(newKey);
       setRecPhase("done");
+      setVoiceSessions(s => s + 1);
 
       // Recalculate transposition with new vocal key
       if (songData) {
@@ -1203,6 +1279,7 @@ export default function VoiceKeyV3() {
       <style>{CSS}</style>
       {audioUrl && <audio ref={audioElRef} src={audioUrl} preload="metadata" />}
       <input ref={fileInputRef} type="file" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,audio/*" style={{display:"none"}} onChange={handleFileSelect} />
+      <input ref={voiceFileInputRef} type="file" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,audio/*" style={{display:"none"}} onChange={e => { const f = e.target.files?.[0]; if (f) { setVoiceUploadFile(f); analyseVoiceRecording(f); } }} />
       <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",flexDirection:"column",alignItems:"center",padding:"0 16px 80px",position:"relative"}}>
 
         {/* Ambient bg */}
@@ -1238,7 +1315,7 @@ export default function VoiceKeyV3() {
           {/* ── TAB 0: VOICE ──────────────────────────────────────────────── */}
           {tab === 0 && <>
             {/* Welcome / Onboarding card — first time only */}
-            {!welcomed && !voiceOK && (
+            {!welcomed && !voiceOK && recPhase !== "done" && (
               <div className="card card-accent fade-in" style={{position:"relative"}}>
                 <button onClick={() => { setWelcomed(true); localStorage.setItem("voicekey_welcomed","true"); }} style={{position:"absolute",top:14,right:14,background:"none",border:"none",color:"var(--muted)",fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
                 <div className="display" style={{fontSize:22,fontWeight:700,marginBottom:10}}>Welcome to VoiceKey!</div>
@@ -1338,10 +1415,15 @@ export default function VoiceKeyV3() {
                     <p style={{fontSize:12,color:"var(--muted)",marginTop:12,textAlign:"center"}}>
                       You sing in a similar range to: <strong style={{color:"rgba(255,255,255,0.7)"}}>{voiceType?.famous}</strong>
                     </p>
+                    {voiceSessions > 0 && (
+                      <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",marginTop:8,textAlign:"center"}}>
+                        Based on {voiceSessions} singing session{voiceSessions !== 1 ? "s" : ""} · Gets more accurate the more you sing
+                      </p>
+                    )}
                   </div>
                   {/* Reset voice button */}
                   <div style={{textAlign:"center",marginBottom:8}}>
-                    <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 12px",color:"rgba(255,255,255,0.25)",borderColor:"rgba(255,255,255,0.06)"}} onClick={() => { setLoNote(null);setHiNote(null);setVoiceType(null);setVocalKey(null);setRecPhase("idle");setMicFailed(false);setMicWeak(false); try{localStorage.removeItem("voicekey_voice");}catch{} }}>
+                    <button className="btn btn-ghost" style={{fontSize:11,padding:"5px 12px",color:"rgba(255,255,255,0.25)",borderColor:"rgba(255,255,255,0.06)"}} onClick={() => { setLoNote(null);setHiNote(null);setVoiceType(null);setVocalKey(null);setRecPhase("idle");setMicFailed(false);setMicWeak(false);setVoiceSessions(0);setVoiceUploadFile(null); try{localStorage.removeItem("voicekey_voice");localStorage.removeItem("voicekey_sessions");}catch{} }}>
                       Redo voice detection
                     </button>
                   </div>
@@ -1362,6 +1444,41 @@ export default function VoiceKeyV3() {
                 {voiceOK && <button className="btn btn-primary" style={{flex:1}} onClick={() => setTab(1)}>Find a Song →</button>}
                 {!recording && recPhase!=="done" && <button className="btn btn-ghost" style={{fontSize:12,padding:"10px 14px"}} onClick={() => {setLoNote(52);setHiNote(72);setVoiceType(detectVoiceType(52,72));setVocalKey("E");setRecPhase("done");}}>Skip (demo)</button>}
               </div>
+
+              {/* OR divider + Voice Upload option */}
+              {!recording && recPhase!=="done" && !voiceUploading && (
+                <>
+                  <div style={{display:"flex",alignItems:"center",gap:14,margin:"18px 0"}}>
+                    <div style={{flex:1,height:1,background:"var(--border)"}} />
+                    <span style={{fontSize:11,color:"var(--muted)",textTransform:"uppercase",letterSpacing:2,fontWeight:600}}>or</span>
+                    <div style={{flex:1,height:1,background:"var(--border)"}} />
+                  </div>
+                  <div
+                    className="upload-zone"
+                    onClick={() => voiceFileInputRef.current?.click()}
+                    style={{marginBottom:4}}
+                  >
+                    <div style={{fontSize:28,marginBottom:8,opacity:0.7}}>📁</div>
+                    <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:4}}>Got a Recording?</div>
+                    <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.6}}>Upload a clip of you singing — we'll figure out your range from that.</div>
+                    <div style={{fontSize:11,color:"rgba(255,255,255,0.15)",marginTop:8}}>Drop file here or tap to browse · MP3, WAV, M4A</div>
+                  </div>
+                </>
+              )}
+
+              {/* Voice upload processing indicator */}
+              {voiceUploading && (
+                <div style={{background:"rgba(99,202,148,0.06)",border:"1px solid rgba(99,202,148,0.2)",borderRadius:14,padding:"20px 18px",textAlign:"center",margin:"14px 0"}}>
+                  <div style={{fontSize:24,marginBottom:10}}>🔬</div>
+                  <div style={{fontWeight:600,fontSize:14,color:"var(--accent)",marginBottom:8}}>Listening to your recording...</div>
+                  <div style={{fontSize:12,color:"var(--muted)",marginBottom:12}}>
+                    {voiceUploadFile?.name && <span>{voiceUploadFile.name} · </span>}This takes a few seconds
+                  </div>
+                  <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+                    {[0,1,2].map(i => <div key={i} style={{width:8,height:8,borderRadius:"50%",background:"var(--accent)",animation:`dotPulse 1.2s ease ${i*0.22}s infinite`}}/>)}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Voice types reference */}
